@@ -10,6 +10,22 @@ import Admin from './pages/Admin.jsx';
 
 function Nav() {
   const { user, logout, cartCount } = useAuth();
+  const { pathname } = useLocation();
+  const inAdmin = pathname.startsWith('/admin');
+
+  if (inAdmin) {
+    return (
+      <header className="nav nav-admin">
+        <Link to="/admin" className="brand brand-on-dark">🛍️ <b>ShopGo</b> <em>Admin</em></Link>
+        <nav className="nav-links">
+          <Link to="/">Open store</Link>
+          {user && <span className="who">{user.name.split(' ')[0]}</span>}
+          <button onClick={logout}>Logout</button>
+        </nav>
+      </header>
+    );
+  }
+
   return (
     <header className="nav">
       <Link to="/" className="brand">🛍️ <b>ShopGo</b></Link>
@@ -17,7 +33,7 @@ function Nav() {
         <Link to="/">Shop</Link>
         {user && <Link to="/cart">🛒 Cart{cartCount > 0 && <span className="pill">{cartCount}</span>}</Link>}
         {user && <Link to="/orders">My orders</Link>}
-        {user?.role === 'admin' && <Link to="/admin">Admin</Link>}
+        {user?.role === 'admin' && <Link to="/admin" className="admin-entry">Admin panel</Link>}
         {user ? (
           <>
             <span className="muted small">Hi, {user.name.split(' ')[0]}</span>

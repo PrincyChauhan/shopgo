@@ -6,19 +6,33 @@ import { Address, ProductArt } from '../ui.jsx';
 const NEXT = { pending: ['paid', 'cancelled'], paid: ['shipped', 'cancelled'], shipped: ['delivered'] };
 const emptyForm = { name: '', description: '', price: '', stock: '0', category_id: '' };
 
+const TABS = [
+  ['dashboard', 'Dashboard', 'Revenue, customers, and stock that needs attention'],
+  ['products', 'Catalog', 'Categories, product details, prices, and photos'],
+  ['orders', 'Orders', 'Shipping addresses and the path from paid to delivered'],
+];
+
 export default function Admin() {
   const [tab, setTab] = useState('dashboard');
-  const tabs = [['dashboard', '📊 Dashboard'], ['products', '📦 Products'], ['orders', '🧾 Orders']];
+  const current = TABS.find(([k]) => k === tab);
   return (
-    <>
-      <h2>Admin</h2>
-      <div className="tabs">
-        {tabs.map(([k, label]) => <button key={k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>{label}</button>)}
-      </div>
-      {tab === 'dashboard' && <Dashboard />}
-      {tab === 'products' && <Products />}
-      {tab === 'orders' && <AllOrders />}
-    </>
+    <div className="admin-shell">
+      <aside className="admin-side">
+        <p className="admin-kicker">Store admin</p>
+        {TABS.map(([k, label]) => (
+          <button key={k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>{label}</button>
+        ))}
+      </aside>
+      <section className="admin-main">
+        <header className="admin-head">
+          <h2>{current[1]}</h2>
+          <p className="muted">{current[2]}</p>
+        </header>
+        {tab === 'dashboard' && <Dashboard />}
+        {tab === 'products' && <Products />}
+        {tab === 'orders' && <AllOrders />}
+      </section>
+    </div>
   );
 }
 
