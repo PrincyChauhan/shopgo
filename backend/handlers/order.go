@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -48,7 +49,7 @@ func canTransition(from, to models.OrderStatus) bool {
 func (h *OrderHandler) Checkout(c *gin.Context) {
 	var req checkoutRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "please fill in all shipping details (valid phone and 6-digit pincode)"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "please fill in all shipping details (address 3+ chars, 10-15 char phone, 6-digit pincode)"})
 		return
 	}
 	userID := middleware.UserID(c)
@@ -146,9 +147,12 @@ func (h *OrderHandler) GetMine(c *gin.Context) {
 	c.JSON(http.StatusOK, order)
 }
 
+type demoPayRequest struct {
+	Method string `json:"method"`
+}
+
 // POST /api/orders/:id/pay
-// Payment is SIMULATED here. In a real shop this is where Stripe/Razorpay
-// confirms the payment before the status changes.
+// Demo-mode payment only (disabled automatically when Razorpay keys are configured).
 func (h *OrderHandler) Pay(c *gin.Context) {
 	// With a real gateway configured, this free shortcut must be closed,
 	// otherwise anyone could mark their own order as paid.
@@ -156,7 +160,43 @@ func (h *OrderHandler) Pay(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "use online payment to pay for this order"})
 		return
 	}
-	h.customerTransition(c, models.StatusPaid)
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+
+	var req demoPayRequest
+	_ = c.ShouldBindJSON(&req) // optional body
+	method := strings.ToLower(strings.TrimSpace(req.Method))
+	switch method {
+	case "upi", "card", "netbanking":
+	default:
+		method = "demo"
+	}
+
+	userID := middleware.UserID(c)
+	var order *models.Order
+	err := h.DB.Transaction(func(tx *gorm.DB) error {
+		var txErr error
+		order, txErr = h.changeStatusTx(tx, id, &userID, models.StatusPaid)
+		if txErr != nil {
+			return txErr
+		}
+		stamp := time.Now().UnixNano()
+		return tx.Create(&models.Payment{
+			OrderID:          order.ID,
+			Provider:         "demo:" + method,
+			GatewayOrderID:   fmt.Sprintf("demo_order_%d_%d", order.ID, stamp),
+			GatewayPaymentID: fmt.Sprintf("demo_pay_%d_%d", order.ID, stamp),
+			Amount:           order.Total,
+			Status:           "paid",
+		}).Error
+	})
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, order)
 }
 
 // POST /api/orders/:id/cancel   (allowed while pending or paid)
@@ -256,54 +296,61 @@ func (h *OrderHandler) UpdateStatus(c *gin.Context) {
 // ownerID is set for customers (they may only touch their own orders) and
 // nil for admins. Cancelling puts the stock back.
 func (h *OrderHandler) changeStatus(orderID uint, ownerID *uint, to models.OrderStatus) (*models.Order, error) {
-	var order models.Order
-
+	var order *models.Order
 	err := h.DB.Transaction(func(tx *gorm.DB) error {
-		q := tx.Preload("Items").Where("id = ?", orderID)
-		if ownerID != nil {
-			q = q.Where("user_id = ?", *ownerID)
-		}
-		if err := q.First(&order).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return &apiError{http.StatusNotFound, "order not found"}
-			}
-			return err
-		}
-
-		if !canTransition(order.Status, to) {
-			return &apiError{http.StatusConflict, fmt.Sprintf("cannot change an order from %s to %s", order.Status, to)}
-		}
-
-		// Compare-and-set: only update if the status is STILL what we read.
-		// If two requests cancel the same order at once, only one wins, so
-		// stock is never restored twice.
-		res := tx.Model(&models.Order{}).
-			Where("id = ? AND status = ?", order.ID, order.Status).
-			Update("status", to)
-		if res.Error != nil {
-			return res.Error
-		}
-		if res.RowsAffected == 0 {
-			return &apiError{http.StatusConflict, "order was just changed by someone else, please retry"}
-		}
-
-		if to == models.StatusCancelled {
-			for _, it := range order.Items {
-				err := tx.Model(&models.Product{}).
-					Where("id = ?", it.ProductID).
-					Update("stock", gorm.Expr("stock + ?", it.Quantity)).Error
-				if err != nil {
-					return err
-				}
-			}
-		}
-
-		order.Status = to
-		return nil
+		var txErr error
+		order, txErr = h.changeStatusTx(tx, orderID, ownerID, to)
+		return txErr
 	})
 	if err != nil {
 		return nil, err
 	}
+	return order, nil
+}
+
+func (h *OrderHandler) changeStatusTx(tx *gorm.DB, orderID uint, ownerID *uint, to models.OrderStatus) (*models.Order, error) {
+	var order models.Order
+
+	q := tx.Preload("Items").Where("id = ?", orderID)
+	if ownerID != nil {
+		q = q.Where("user_id = ?", *ownerID)
+	}
+	if err := q.First(&order).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, &apiError{http.StatusNotFound, "order not found"}
+		}
+		return nil, err
+	}
+
+	if !canTransition(order.Status, to) {
+		return nil, &apiError{http.StatusConflict, fmt.Sprintf("cannot change an order from %s to %s", order.Status, to)}
+	}
+
+	// Compare-and-set: only update if the status is STILL what we read.
+	// If two requests cancel the same order at once, only one wins, so
+	// stock is never restored twice.
+	res := tx.Model(&models.Order{}).
+		Where("id = ? AND status = ?", order.ID, order.Status).
+		Update("status", to)
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return nil, &apiError{http.StatusConflict, "order was just changed by someone else, please retry"}
+	}
+
+	if to == models.StatusCancelled {
+		for _, it := range order.Items {
+			err := tx.Model(&models.Product{}).
+				Where("id = ?", it.ProductID).
+				Update("stock", gorm.Expr("stock + ?", it.Quantity)).Error
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	order.Status = to
 	return &order, nil
 }
 
@@ -340,7 +387,7 @@ func (h *OrderHandler) page(c *gin.Context, scope func() *gorm.DB) ([]models.Ord
 type checkoutRequest struct {
 	Name    string `json:"name" binding:"required,min=2,max=100"`
 	Phone   string `json:"phone" binding:"required,min=10,max=15"`
-	Address string `json:"address" binding:"required,min=5,max=300"`
+	Address string `json:"address" binding:"required,min=3,max=300"`
 	City    string `json:"city" binding:"required,min=2,max=100"`
 	State   string `json:"state" binding:"required,min=2,max=100"`
 	Pincode string `json:"pincode" binding:"required,len=6,numeric"`

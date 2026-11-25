@@ -67,7 +67,8 @@ func (h *ProductHandler) List(c *gin.Context) {
 	filtered := func() *gorm.DB {
 		q := h.DB.Model(&models.Product{})
 		if search != "" {
-			q = q.Where("LOWER(name) LIKE ?", "%"+search+"%")
+			like := "%" + search + "%"
+			q = q.Where("LOWER(name) LIKE ? OR LOWER(description) LIKE ?", like, like)
 		}
 		if categoryID > 0 {
 			q = q.Where("category_id = ?", categoryID)

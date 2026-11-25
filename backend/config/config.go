@@ -21,6 +21,11 @@ type Config struct {
 	RazorpayKeyID         string
 	RazorpayKeySecret     string
 	RazorpayWebhookSecret string
+
+	// AI (OpenAI-compatible endpoint: works with Gemini, Groq, OpenRouter, or Ollama)
+	AIBaseURL string
+	AIAPIKey  string
+	AIModel   string
 }
 
 func Load() *Config {
@@ -37,6 +42,10 @@ func Load() *Config {
 		RazorpayKeyID:         getEnv("RAZORPAY_KEY_ID", ""),
 		RazorpayKeySecret:     getEnv("RAZORPAY_KEY_SECRET", ""),
 		RazorpayWebhookSecret: getEnv("RAZORPAY_WEBHOOK_SECRET", ""),
+
+		AIBaseURL: getEnv("AI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"),
+		AIAPIKey:  getEnv("AI_API_KEY", ""),
+		AIModel:   getEnv("AI_MODEL", "gemini-2.5-flash"),
 	}
 
 	if cfg.JWTSecret == "change-me-in-production" {
@@ -83,4 +92,15 @@ func getEnv(key, fallback string) string {
 // Otherwise the app uses the free demo payment.
 func (c *Config) PaymentsEnabled() bool {
 	return c.RazorpayKeyID != "" && c.RazorpayKeySecret != ""
+}
+
+// AIEnabled is true when an AI key is set or a local OpenAI-compatible server is configured.
+func (c *Config) AIEnabled() bool {
+	if c.AIBaseURL == "" || c.AIModel == "" {
+		return false
+	}
+	if c.AIAPIKey != "" {
+		return true
+	}
+	return strings.Contains(c.AIBaseURL, "localhost") || strings.Contains(c.AIBaseURL, "127.0.0.1")
 }

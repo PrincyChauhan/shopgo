@@ -10,8 +10,9 @@ export default function Shop() {
   const toast = useToast();
   const { user, refreshCart } = useAuth();
   const [cats, setCats] = useState([]);
-  const [f, setF] = useState({ q: '', category_id: '', sort: 'newest', in_stock: false, page: 1 });
+  const [f, setF] = useState({ q: '', category_id: '', min_price: 0, max_price: 0, sort: 'newest', in_stock: false, page: 1 });
   const [res, setRes] = useState(null); // null = loading
+  const [aiBusy, setAiBusy] = useState(false);
 
   useEffect(() => { api('/categories').then(setCats).catch(() => {}); }, []);
 
@@ -21,6 +22,8 @@ export default function Shop() {
       const p = new URLSearchParams({ sort: f.sort, page: f.page, limit: 8 });
       if (f.q) p.set('q', f.q);
       if (f.category_id) p.set('category_id', f.category_id);
+      if (f.min_price > 0) p.set('min_price', f.min_price);
+      if (f.max_price > 0) p.set('max_price', f.max_price);
       if (f.in_stock) p.set('in_stock', 'true');
       api('/products?' + p).then(setRes).catch((e) => toast(e.message, 'err'));
     }, 250);
@@ -28,6 +31,29 @@ export default function Shop() {
   }, [f]);
 
   const set = (k, v) => setF({ ...f, [k]: v, page: k === 'page' ? v : 1 });
+
+  async function smartSearch(e) {
+    e.preventDefault();
+    if (!f.q.trim()) return;
+    setAiBusy(true);
+    try {
+      const parsed = await api('/products/smart-search?q=' + encodeURIComponent(f.q.trim()));
+      setF({
+        q: parsed.q || '',
+        category_id: parsed.category_id ? String(parsed.category_id) : '',
+        min_price: parsed.min_price || 0,
+        max_price: parsed.max_price || 0,
+        in_stock: Boolean(parsed.in_stock),
+        sort: parsed.sort || 'newest',
+        page: 1,
+      });
+      if (parsed.ai_used) toast('AI applied filters ✨', 'info');
+    } catch (e2) {
+      toast(e2.message, 'err');
+    } finally {
+      setAiBusy(false);
+    }
+  }
 
   async function add(id) {
     if (!user) return nav('/login');
@@ -45,9 +71,10 @@ export default function Shop() {
       <section className="hero">
         <h1>Everything you need, delivered to your door.</h1>
         <p>Browse the catalog, pay securely with UPI, cards or netbanking, and track your order.</p>
-        <div className="searchbar">
-          <input placeholder="Search for products…" value={f.q} onChange={(e) => set('q', e.target.value)} />
-        </div>
+        <form className="searchbar" onSubmit={smartSearch}>
+          <input placeholder="Search or try: headphones under 5000 in stock…" value={f.q} onChange={(e) => set('q', e.target.value)} />
+          <button type="submit" disabled={aiBusy || !f.q.trim()}>{aiBusy ? '…' : '✨ AI Search'}</button>
+        </form>
         <div className="perks"><span>🚚 Free delivery</span><span>🔒 Secure payments</span><span>↩️ Easy cancellation</span></div>
       </section>
 
@@ -57,6 +84,12 @@ export default function Shop() {
           {cats.map((c) => (
             <button key={c.id} className={'chip' + (String(c.id) === f.category_id ? ' active' : '')} onClick={() => set('category_id', String(c.id))}>{c.name}</button>
           ))}
+          {(f.min_price > 0 || f.max_price > 0) && (
+            <span className="chip static">
+              {f.min_price > 0 ? money(f.min_price) : '₹0'} – {f.max_price > 0 ? money(f.max_price) : 'Any'}
+              <button className="link bad" style={{ marginLeft: 6 }} onClick={() => setF({ ...f, min_price: 0, max_price: 0, page: 1 })}>×</button>
+            </span>
+          )}
         </div>
         <div className="right">
           <label className="check"><input type="checkbox" checked={f.in_stock} onChange={(e) => set('in_stock', e.target.checked)} /> In stock</label>

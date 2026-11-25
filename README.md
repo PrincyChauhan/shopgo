@@ -138,26 +138,6 @@ Admin (same header, and the user role must be `admin`):
 
 Login and register are limited to 10 requests per minute per IP.
 
-## Where to add AI
-
-The useful places are the two screens you already have. Keep the model behind the Go API so the browser never holds an API key, and keep money, stock, and order status in the existing handlers. The model should suggest; those handlers should still decide.
-
-**Store**
-
-1. **Search box on the home page.** People type "headphones under 2000" instead of using the category chip and the sort menu. A small model (or even keyword extraction) can turn that sentence into the query params `/api/products` already accepts: `q`, `category_id`, and a price range if you add one. This is the highest-value, lowest-risk addition.
-2. **Product page, "similar items".** Embed product name + description + category, store the vectors in Postgres (`pgvector`) or a small side table, and show 4 neighbors under the product. No checkout logic changes.
-3. **Order helper on My orders.** A chat panel that can only call the signed-in user's `/api/orders`. It answers "where is order 12?" from the status you already store. Do not let it cancel or pay by itself.
-
-**Admin panel**
-
-4. **Catalog form, "Write description".** Next to the description field, a button that sends the product name and category to a model and fills the textarea. The admin still presses Create. Same idea for a short SEO blurb later.
-5. **Photo upload.** After the image is saved, ask a vision model for a category suggestion and alt text. Show it as a hint on the product form. Do not auto-move the product into a category.
-6. **Dashboard summary.** `/api/admin/stats` already returns revenue, status counts, and low stock. A paragraph at the top ("3 products are at 0, revenue is ₹…") is a single prompt over that JSON. Good first admin feature because the data is already there.
-
-Skip AI for price, stock updates, payment verification, and status changes. Those stay in the current handlers.
-
-A practical order: (6) dashboard summary, then (4) description helper, then (1) natural-language search.
-
 ## Test
 
 ```powershell

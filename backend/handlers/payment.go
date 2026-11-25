@@ -74,7 +74,11 @@ func (h *PaymentHandler) Create(c *gin.Context) {
 	}
 
 	if !h.Cfg.PaymentsEnabled() {
-		c.JSON(http.StatusOK, gin.H{"demo": true})
+		c.JSON(http.StatusOK, gin.H{
+			"demo":     true,
+			"amount":   order.Total,
+			"currency": "INR",
+		})
 		return
 	}
 

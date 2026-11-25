@@ -39,12 +39,36 @@ export default function Admin() {
 function Dashboard() {
   const toast = useToast();
   const [s, setS] = useState(null);
+  const [summary, setSummary] = useState('');
+  const [aiBusy, setAiBusy] = useState(false);
   useEffect(() => { api('/admin/stats').then(setS).catch((e) => toast(e.message, 'err')); }, []);
   if (!s) return <div className="skeleton" style={{ height: 160 }} />;
+
+  async function summarize() {
+    setAiBusy(true);
+    try {
+      const r = await api('/admin/stats/summary');
+      setSummary(r.summary);
+    } catch (e) {
+      toast(e.message, 'err');
+    } finally {
+      setAiBusy(false);
+    }
+  }
 
   const by = s.orders_by_status || {};
   return (
     <>
+      <div className="panel ai-box">
+        <div className="row">
+          <div>
+            <h3>✨ AI store briefing</h3>
+            <p className="small muted">Turns your live revenue, order statuses, and low-stock items into a quick summary.</p>
+          </div>
+          <button onClick={summarize} disabled={aiBusy}>{aiBusy ? 'Thinking…' : summary ? 'Refresh summary' : 'Summarize with AI'}</button>
+        </div>
+        {summary && <p style={{ margin: 0 }}>{summary}</p>}
+      </div>
       <div className="stats">
         <div className="stat"><span>Revenue (paid orders)</span><strong>{money(s.revenue)}</strong></div>
         <div className="stat"><span>Total orders</span><strong>{s.orders_total}</strong></div>
@@ -81,6 +105,7 @@ function Products() {
   const [editId, setEditId] = useState(null);
   const [file, setFile] = useState(null);
   const [newCat, setNewCat] = useState('');
+  const [aiBusy, setAiBusy] = useState(false);
 
   const load = () => {
     api('/products?limit=50').then((r) => setProducts(r.data)).catch((e) => toast(e.message, 'err'));
@@ -134,6 +159,25 @@ function Products() {
   const delCat = async (c) => {
     try { await api(`/admin/categories/${c.id}`, { method: 'DELETE' }); load(); } catch (e) { toast(e.message, 'err'); }
   };
+  const draftDesc = async () => {
+    if (form.name.trim().length < 2) return toast('Enter a product name first', 'info');
+    setAiBusy(true);
+    try {
+      const r = await api('/admin/products/draft-description', {
+        method: 'POST',
+        body: {
+          name: form.name.trim(),
+          category_id: Number(form.category_id) || 0,
+          price_inr: parseFloat(form.price) || 0,
+        },
+      });
+      setForm((prev) => ({ ...prev, description: r.description }));
+    } catch (e) {
+      toast(e.message, 'err');
+    } finally {
+      setAiBusy(false);
+    }
+  };
 
   return (
     <>
@@ -152,7 +196,15 @@ function Products() {
         <h3>{editId ? `Edit product #${editId}` : 'Add product'}</h3>
         <div className="fgrid">
           <label className="fl full">Name<input value={form.name} onChange={change('name')} required /></label>
-          <label className="fl full">Description<textarea value={form.description} onChange={change('description')} /></label>
+          <div className="fl full">
+            <div className="row">
+              <span>Description</span>
+              <button type="button" className="small-btn" disabled={aiBusy} onClick={draftDesc}>
+                {aiBusy ? 'Writing…' : '✨ Draft with AI'}
+              </button>
+            </div>
+            <textarea value={form.description} onChange={change('description')} />
+          </div>
           <label className="fl">Price (₹)<input type="number" step="0.01" min="0.01" value={form.price} onChange={change('price')} required /></label>
           <label className="fl">Stock<input type="number" min="0" value={form.stock} onChange={change('stock')} required /></label>
           <label className="fl">Category

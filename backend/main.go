@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"shopgo/ai"
 	"shopgo/config"
 	"shopgo/database"
 	"shopgo/handlers"
@@ -30,6 +31,11 @@ func main() {
 		log.Println("Payments: Razorpay is ON")
 	} else {
 		log.Println("Payments: DEMO mode (add RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET to .env for real payments)")
+	}
+	if cfg.AIEnabled() {
+		log.Printf("AI: ON (%s)", cfg.AIModel)
+	} else {
+		log.Println("AI: OFF (add AI_API_KEY to .env to enable AI features)")
 	}
 
 	r := setupRouter(db, cfg)
@@ -56,6 +62,7 @@ func setupRouter(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	orderH := &handlers.OrderHandler{DB: db, Cfg: cfg}
 	payH := &handlers.PaymentHandler{DB: db, Cfg: cfg}
 	statsH := &handlers.StatsHandler{DB: db}
+	aiH := &handlers.AIHandler{DB: db, Client: ai.NewClient(cfg.AIBaseURL, cfg.AIAPIKey, cfg.AIModel)}
 
 	// Serve uploaded product images at /uploads/<file>
 	r.Static("/uploads", cfg.UploadDir)
@@ -78,6 +85,7 @@ func setupRouter(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	api.POST("/auth/login", authLimit, authH.Login)
 
 	api.GET("/products", productH.List)
+	api.GET("/products/smart-search", middleware.RateLimit(20, time.Minute), aiH.SmartSearch)
 	api.GET("/products/:id", productH.Get)
 	api.GET("/categories", categoryH.List)
 	api.POST("/webhooks/razorpay", payH.Webhook)
@@ -103,6 +111,8 @@ func setupRouter(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	// ---- Admin-only routes (login + admin role) ----
 	admin := protected.Group("/admin", middleware.AdminOnly())
 	admin.GET("/stats", statsH.Get)
+	admin.GET("/stats/summary", aiH.StatsSummary)
+	admin.POST("/products/draft-description", aiH.DraftDescription)
 	admin.POST("/products", productH.Create)
 	admin.PUT("/products/:id", productH.Update)
 	admin.DELETE("/products/:id", productH.Delete)

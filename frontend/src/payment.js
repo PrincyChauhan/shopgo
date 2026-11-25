@@ -1,4 +1,5 @@
 import { api } from './api';
+import { openDemoPaymentModal } from './paymentModal.jsx';
 
 function loadRazorpay() {
   return new Promise((resolve, reject) => {
@@ -16,14 +17,14 @@ function loadRazorpay() {
 export async function payForOrder(order, user) {
   const info = await api(`/orders/${order.id}/payment`, { method: 'POST' });
 
-  // No Razorpay keys on the server: use the free demo payment.
+  // No Razorpay keys on the server: show the demo payment checkout popup.
   if (info.demo) {
-    await api(`/orders/${order.id}/pay`, { method: 'POST' });
-    return 'paid';
+    return openDemoPaymentModal(order, info.amount);
   }
 
   await loadRazorpay();
   return new Promise((resolve, reject) => {
+    let settled = false;
     const rz = new window.Razorpay({
       key: info.key_id,
       amount: info.amount,
@@ -36,6 +37,7 @@ export async function payForOrder(order, user) {
       // Called after a successful payment. The SERVER checks the signature
       // before marking the order paid; the browser is never trusted.
       handler: async (resp) => {
+        settled = true;
         try {
           await api(`/orders/${order.id}/payment/verify`, { method: 'POST', body: resp });
           resolve('paid');
@@ -43,7 +45,17 @@ export async function payForOrder(order, user) {
           reject(e);
         }
       },
-      modal: { ondismiss: () => resolve('cancelled') },
+      modal: {
+        ondismiss: () => {
+          if (!settled) resolve('cancelled');
+        },
+      },
+    });
+    rz.on('payment.failed', (resp) => {
+      if (!settled) {
+        settled = true;
+        reject(new Error(resp?.error?.description || 'Payment failed. Please try again.'));
+      }
     });
     rz.open();
   });

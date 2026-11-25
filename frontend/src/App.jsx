@@ -7,6 +7,7 @@ import AuthForm from './pages/AuthForm.jsx';
 import Cart from './pages/Cart.jsx';
 import Orders from './pages/Orders.jsx';
 import Admin from './pages/Admin.jsx';
+import { PaymentModalHost } from './paymentModal.jsx';
 
 function Nav() {
   const { user, logout, cartCount } = useAuth();
@@ -77,6 +78,7 @@ export default function App() {
         </Routes>
       </main>
       <footer className="footer">© {new Date().getFullYear()} ShopGo · Built with Go, Gin, PostgreSQL & React</footer>
+      <PaymentModalHost />
     </>
   );
 }
