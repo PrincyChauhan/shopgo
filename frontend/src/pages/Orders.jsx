@@ -4,6 +4,7 @@ import { api, money } from '../api';
 import { useAuth } from '../auth.jsx';
 import { useToast } from '../toast.jsx';
 import { payForOrder } from '../payment.js';
+import { confirmAction } from '../confirm.jsx';
 import { Address, Steps } from '../ui.jsx';
 
 export default function Orders() {
@@ -29,7 +30,14 @@ export default function Orders() {
   }
 
   async function cancel(o) {
-    if (!confirm(`Cancel order #${o.id}?`)) return;
+    const confirmed = await confirmAction({
+      title: `Cancel order #${o.id}?`,
+      message: o.status === 'paid'
+        ? 'This paid order will be cancelled and its payment will be refunded.'
+        : 'This order will be cancelled and its reserved stock will be restored.',
+      confirmText: 'Cancel order',
+    });
+    if (!confirmed) return;
     try { await api(`/orders/${o.id}/cancel`, { method: 'POST' }); toast('Order cancelled', 'info'); } catch (e) { toast(e.message, 'err'); }
     load();
   }

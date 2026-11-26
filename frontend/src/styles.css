@@ -114,6 +114,7 @@ img.art.large{object-fit:cover}
 .modal-backdrop{position:fixed;inset:0;z-index:80;background:rgba(20,23,43,.55);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:16px}
 .modal{background:#fff;border-radius:18px;box-shadow:0 24px 60px rgba(20,23,43,.28);width:100%;max-width:430px;padding:22px;display:flex;flex-direction:column;gap:14px;animation:up .2s}
 .modal-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}.modal-head h3{margin-top:4px}
+.confirm-modal{max-width:390px}.confirm-actions{justify-content:flex-end}.confirm-actions>*{flex:0 0 auto}
 .demo-pill{display:inline-block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;background:#ede9fe;color:#6d28d9;padding:2px 8px;border-radius:99px}
 .pay-amount{background:#f7f8fd;border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center}.pay-amount strong{font-size:22px}
 .pay-tabs{display:flex;gap:8px;flex-wrap:wrap}

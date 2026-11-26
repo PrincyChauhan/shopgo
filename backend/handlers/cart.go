@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"shopgo/middleware"
 	"shopgo/models"
@@ -76,42 +77,40 @@ func (h *CartHandler) Add(c *gin.Context) {
 	}
 	userID := middleware.UserID(c)
 
-	var product models.Product
-	if err := h.DB.First(&product, req.ProductID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
-		} else {
-			respondError(c, err)
+	err := h.DB.Transaction(func(tx *gorm.DB) error {
+		var product models.Product
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&product, req.ProductID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return &apiError{http.StatusNotFound, "product not found"}
+			}
+			return err
 		}
-		return
-	}
 
-	var item models.CartItem
-	err := h.DB.Where("user_id = ? AND product_id = ?", userID, req.ProductID).First(&item).Error
-	exists := err == nil
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		respondError(c, err)
-		return
-	}
+		var item models.CartItem
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("user_id = ? AND product_id = ?", userID, req.ProductID).
+			First(&item).Error
+		exists := err == nil
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
 
-	newQty := req.Quantity
-	if exists {
-		newQty += item.Quantity
-	}
-	if newQty > maxPerItem {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("maximum %d per item", maxPerItem)})
-		return
-	}
-	if newQty > product.Stock {
-		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("only %d of %q in stock", product.Stock, product.Name)})
-		return
-	}
+		newQty := req.Quantity
+		if exists {
+			newQty += item.Quantity
+		}
+		if newQty > maxPerItem {
+			return &apiError{http.StatusBadRequest, fmt.Sprintf("maximum %d per item", maxPerItem)}
+		}
+		if newQty > product.Stock {
+			return &apiError{http.StatusConflict, fmt.Sprintf("only %d of %q in stock", product.Stock, product.Name)}
+		}
 
-	if exists {
-		err = h.DB.Model(&item).Update("quantity", newQty).Error
-	} else {
-		err = h.DB.Create(&models.CartItem{UserID: userID, ProductID: req.ProductID, Quantity: newQty}).Error
-	}
+		if exists {
+			return tx.Model(&item).Update("quantity", newQty).Error
+		}
+		return tx.Create(&models.CartItem{UserID: userID, ProductID: req.ProductID, Quantity: newQty}).Error
+	})
 	if err != nil {
 		respondError(c, err)
 		return
@@ -132,24 +131,27 @@ func (h *CartHandler) UpdateQuantity(c *gin.Context) {
 	}
 	userID := middleware.UserID(c)
 
-	var item models.CartItem
-	err := h.DB.Preload("Product").
-		Where("user_id = ? AND product_id = ?", userID, productID).
-		First(&item).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "item is not in your cart"})
-		} else {
-			respondError(c, err)
+	err := h.DB.Transaction(func(tx *gorm.DB) error {
+		var item models.CartItem
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("user_id = ? AND product_id = ?", userID, productID).
+			First(&item).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return &apiError{http.StatusNotFound, "item is not in your cart"}
+			}
+			return err
 		}
-		return
-	}
-	if req.Quantity > item.Product.Stock {
-		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("only %d of %q in stock", item.Product.Stock, item.Product.Name)})
-		return
-	}
 
-	if err := h.DB.Model(&item).Update("quantity", req.Quantity).Error; err != nil {
+		var product models.Product
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&product, productID).Error; err != nil {
+			return err
+		}
+		if req.Quantity > product.Stock {
+			return &apiError{http.StatusConflict, fmt.Sprintf("only %d of %q in stock", product.Stock, product.Name)}
+		}
+		return tx.Model(&item).Update("quantity", req.Quantity).Error
+	})
+	if err != nil {
 		respondError(c, err)
 		return
 	}

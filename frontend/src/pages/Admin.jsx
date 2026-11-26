@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, money } from '../api';
 import { useToast } from '../toast.jsx';
 import { Address, ProductArt } from '../ui.jsx';
+import { confirmAction } from '../confirm.jsx';
 
 const NEXT = { pending: ['paid', 'cancelled'], paid: ['shipped', 'cancelled'], shipped: ['delivered'] };
 const emptyForm = { name: '', description: '', price: '', stock: '0', category_id: '' };
@@ -149,7 +150,12 @@ function Products() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
   const del = async (p) => {
-    if (!confirm(`Delete "${p.name}"?`)) return;
+    const confirmed = await confirmAction({
+      title: `Delete "${p.name}"?`,
+      message: 'This removes the product and its existing cart entries.',
+      confirmText: 'Delete product',
+    });
+    if (!confirmed) return;
     try { await api(`/admin/products/${p.id}`, { method: 'DELETE' }); toast('Deleted', 'info'); load(); } catch (e) { toast(e.message, 'err'); }
   };
   const addCat = async (e) => {

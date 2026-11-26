@@ -10,12 +10,13 @@ import (
 // Config holds every setting the app needs.
 // Values come from environment variables (or the backend/.env file).
 type Config struct {
-	Port          string
-	DatabaseURL   string
-	JWTSecret     string
-	UploadDir     string
-	AdminEmail    string
-	AdminPassword string
+	Port           string
+	DatabaseURL    string
+	JWTSecret      string
+	UploadDir      string
+	AdminEmail     string
+	AdminPassword  string
+	TrustedProxies string
 
 	// Razorpay (leave empty to use the free demo payment instead)
 	RazorpayKeyID         string
@@ -32,12 +33,13 @@ func Load() *Config {
 	loadDotEnv(".env")
 
 	cfg := &Config{
-		Port:          getEnv("PORT", "8080"),
-		DatabaseURL:   getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"),
-		JWTSecret:     getEnv("JWT_SECRET", "change-me-in-production"),
-		UploadDir:     getEnv("UPLOAD_DIR", "uploads"),
-		AdminEmail:    getEnv("ADMIN_EMAIL", "admin@shopgo.local"),
-		AdminPassword: getEnv("ADMIN_PASSWORD", "admin12345"),
+		Port:           getEnv("PORT", "8080"),
+		DatabaseURL:    getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"),
+		JWTSecret:      getEnv("JWT_SECRET", "change-me-in-production"),
+		UploadDir:      getEnv("UPLOAD_DIR", "uploads"),
+		AdminEmail:     getEnv("ADMIN_EMAIL", "admin@shopgo.local"),
+		AdminPassword:  getEnv("ADMIN_PASSWORD", "admin12345"),
+		TrustedProxies: getEnv("TRUSTED_PROXIES", ""),
 
 		RazorpayKeyID:         getEnv("RAZORPAY_KEY_ID", ""),
 		RazorpayKeySecret:     getEnv("RAZORPAY_KEY_SECRET", ""),

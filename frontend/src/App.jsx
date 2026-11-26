@@ -8,6 +8,7 @@ import Cart from './pages/Cart.jsx';
 import Orders from './pages/Orders.jsx';
 import Admin from './pages/Admin.jsx';
 import { PaymentModalHost } from './paymentModal.jsx';
+import { ConfirmDialogHost } from './confirm.jsx';
 
 function Nav() {
   const { user, logout, cartCount } = useAuth();
@@ -78,6 +79,7 @@ export default function App() {
         </Routes>
       </main>
       <footer className="footer">© {new Date().getFullYear()} ShopGo </footer>
+      <ConfirmDialogHost />
       <PaymentModalHost />
     </>
   );

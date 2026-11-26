@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -201,7 +202,18 @@ func (h *OrderHandler) Pay(c *gin.Context) {
 
 // POST /api/orders/:id/cancel   (allowed while pending or paid)
 func (h *OrderHandler) Cancel(c *gin.Context) {
-	h.customerTransition(c, models.StatusCancelled)
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	userID := middleware.UserID(c)
+	order, err := h.changeStatus(id, &userID, models.StatusCancelled)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	h.refundCancelledOrder(order)
+	c.JSON(http.StatusOK, order)
 }
 
 func (h *OrderHandler) customerTransition(c *gin.Context, to models.OrderStatus) {
@@ -287,7 +299,42 @@ func (h *OrderHandler) UpdateStatus(c *gin.Context) {
 		respondError(c, err)
 		return
 	}
+	if req.Status == models.StatusCancelled {
+		h.refundCancelledOrder(order)
+	}
 	c.JSON(http.StatusOK, order)
+}
+
+func (h *OrderHandler) refundCancelledOrder(order *models.Order) {
+	if !h.Cfg.PaymentsEnabled() {
+		return
+	}
+
+	var payment models.Payment
+	err := h.DB.Where(
+		"order_id = ? AND provider = ? AND status IN ?",
+		order.ID, "razorpay", []string{"paid", "refund_failed"},
+	).Order("id DESC").First(&payment).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return
+	}
+	if err != nil {
+		log.Printf("could not find payment for cancelled order %d: %v", order.ID, err)
+		return
+	}
+	if payment.GatewayPaymentID == "" {
+		return
+	}
+
+	if err := h.DB.Model(&payment).Update("status", "refund_pending").Error; err != nil {
+		log.Printf("could not mark payment %d for refund: %v", payment.ID, err)
+		return
+	}
+	payment.Status = "refund_pending"
+	paymentHandler := &PaymentHandler{DB: h.DB, Cfg: h.Cfg}
+	if err := paymentHandler.refund(&payment); err != nil {
+		log.Printf("automatic refund failed for payment %s: %v", payment.GatewayPaymentID, err)
+	}
 }
 
 // ---------- Shared logic ----------

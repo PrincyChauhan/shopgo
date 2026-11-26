@@ -98,5 +98,5 @@ type Payment struct {
 	GatewayOrderID   string `gorm:"uniqueIndex;not null" json:"gateway_order_id"`
 	GatewayPaymentID string `gorm:"not null;default:''" json:"gateway_payment_id"`
 	Amount           int64  `gorm:"not null" json:"amount"`
-	Status           string `gorm:"not null;default:created" json:"status"` // created | paid
+	Status           string `gorm:"not null;default:created" json:"status"` // created | paid | refund_pending | refunded | refund_failed
 }

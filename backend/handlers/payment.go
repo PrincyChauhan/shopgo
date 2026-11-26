@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -79,6 +80,24 @@ func (h *PaymentHandler) Create(c *gin.Context) {
 			"amount":   order.Total,
 			"currency": "INR",
 		})
+		return
+	}
+
+	var existing models.Payment
+	err = h.DB.Where("order_id = ? AND provider = ? AND status = ?", order.ID, "razorpay", "created").
+		First(&existing).Error
+	if err == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"demo":              false,
+			"key_id":            h.Cfg.RazorpayKeyID,
+			"razorpay_order_id": existing.GatewayOrderID,
+			"amount":            existing.Amount,
+			"currency":          "INR",
+		})
+		return
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		respondError(c, err)
 		return
 	}
 
@@ -177,8 +196,13 @@ func (h *PaymentHandler) Verify(c *gin.Context) {
 		return
 	}
 
-	if err := h.markPaid(req.OrderID, req.PaymentID); err != nil {
+	paid, err := h.markPaid(req.OrderID, req.PaymentID)
+	if err != nil {
 		respondError(c, err)
+		return
+	}
+	if !paid {
+		c.JSON(http.StatusConflict, gin.H{"error": "this order is no longer waiting for payment"})
 		return
 	}
 
@@ -225,7 +249,8 @@ func (h *PaymentHandler) Webhook(c *gin.Context) {
 
 	e := ev.Payload.Payment.Entity
 	if (ev.Event == "payment.captured" || ev.Event == "order.paid") && e.OrderID != "" {
-		if err := h.markPaid(e.OrderID, e.ID); err != nil {
+		_, err := h.markPaid(e.OrderID, e.ID)
+		if err != nil {
 			log.Printf("webhook markPaid failed: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "try again"}) // Razorpay will retry
 			return
@@ -236,8 +261,11 @@ func (h *PaymentHandler) Webhook(c *gin.Context) {
 
 // markPaid is safe to call twice (browser verify AND webhook both arrive):
 // the first call flips created -> paid, the second finds nothing to do.
-func (h *PaymentHandler) markPaid(gatewayOrderID, paymentID string) error {
-	return h.DB.Transaction(func(tx *gorm.DB) error {
+func (h *PaymentHandler) markPaid(gatewayOrderID, paymentID string) (bool, error) {
+	paid := false
+	var refundPayment *models.Payment
+
+	err := h.DB.Transaction(func(tx *gorm.DB) error {
 		res := tx.Model(&models.Payment{}).
 			Where("gateway_order_id = ? AND status = ?", gatewayOrderID, "created").
 			Updates(map[string]any{"status": "paid", "gateway_payment_id": paymentID})
@@ -245,7 +273,24 @@ func (h *PaymentHandler) markPaid(gatewayOrderID, paymentID string) error {
 			return res.Error
 		}
 		if res.RowsAffected == 0 {
-			return nil // already processed
+			var existing models.Payment
+			if err := tx.Where("gateway_order_id = ?", gatewayOrderID).First(&existing).Error; err != nil {
+				return err
+			}
+			var order models.Order
+			if err := tx.First(&order, existing.OrderID).Error; err != nil {
+				return err
+			}
+			if existing.Status == "paid" && order.Status == models.StatusPaid {
+				paid = true
+			} else if existing.Status == "refund_pending" || existing.Status == "refund_failed" {
+				paid = false
+			} else if existing.Status == "refunded" {
+				paid = false
+			} else if order.Status != models.StatusPending {
+				refundPayment = &existing
+			}
+			return nil
 		}
 
 		var p models.Payment
@@ -259,9 +304,58 @@ func (h *PaymentHandler) markPaid(gatewayOrderID, paymentID string) error {
 			return res.Error
 		}
 		if res.RowsAffected == 0 {
-			// e.g. the customer cancelled while paying. The money arrived, so a refund is needed.
-			log.Printf("WARNING: payment %s received for order %d which is no longer pending: refund needed", paymentID, p.OrderID)
+			tx.Model(&models.Payment{}).
+				Where("id = ?", p.ID).
+				Updates(map[string]any{"status": "refund_pending", "gateway_payment_id": paymentID})
+			refundPayment = &p
+			return nil
 		}
+		paid = true
 		return nil
 	})
+	if err != nil {
+		return false, err
+	}
+	if refundPayment != nil {
+		if err := h.refund(refundPayment); err != nil {
+			log.Printf("automatic refund failed for payment %s: %v", paymentID, err)
+		}
+		return false, nil
+	}
+	return paid, nil
+}
+
+// refund attempts a full refund when money arrived for a cancelled or otherwise
+// non-pending order. Razorpay is retried only by explicit status tooling; failures
+// remain visible on the payment record instead of being silently discarded.
+func (h *PaymentHandler) refund(payment *models.Payment) error {
+	if !h.Cfg.PaymentsEnabled() || payment.GatewayPaymentID == "" {
+		return nil
+	}
+
+	payload, _ := json.Marshal(map[string]any{"amount": payment.Amount})
+	req, err := http.NewRequest(
+		http.MethodPost,
+		fmt.Sprintf("https://api.razorpay.com/v1/payments/%s/refund", payment.GatewayPaymentID),
+		bytes.NewReader(payload),
+	)
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth(h.Cfg.RazorpayKeyID, h.Cfg.RazorpayKeySecret)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		h.DB.Model(payment).Update("status", "refund_failed")
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		h.DB.Model(payment).Update("status", "refund_failed")
+		return fmt.Errorf("razorpay refund returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return h.DB.Model(payment).Update("status", "refunded").Error
 }

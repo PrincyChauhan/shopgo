@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -18,6 +19,19 @@ import (
 
 func main() {
 	cfg := config.Load()
+
+	if strings.EqualFold(os.Getenv("GIN_MODE"), "release") {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	if gin.Mode() == gin.ReleaseMode {
+		if cfg.JWTSecret == "change-me-in-production" {
+			log.Fatal("JWT_SECRET must be changed before running in production")
+		}
+		if cfg.AdminPassword == "admin12345" {
+			log.Fatal("ADMIN_PASSWORD must be changed before running in production")
+		}
+	}
 
 	if err := os.MkdirAll(cfg.UploadDir, 0o755); err != nil {
 		log.Fatalf("cannot create upload dir: %v", err)
@@ -46,6 +60,21 @@ func main() {
 
 func setupRouter(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	r := gin.Default() // Logger + Recovery middleware included
+	if proxies := strings.TrimSpace(cfg.TrustedProxies); proxies != "" {
+		list := make([]string, 0)
+		for _, proxy := range strings.Split(proxies, ",") {
+			if proxy = strings.TrimSpace(proxy); proxy != "" {
+				list = append(list, proxy)
+			}
+		}
+		if err := r.SetTrustedProxies(list); err != nil {
+			log.Fatalf("invalid TRUSTED_PROXIES: %v", err)
+		}
+	} else {
+		if err := r.SetTrustedProxies(nil); err != nil {
+			log.Fatalf("cannot disable trusted proxies: %v", err)
+		}
+	}
 
 	// Basic security headers on every response.
 	r.Use(func(c *gin.Context) {
